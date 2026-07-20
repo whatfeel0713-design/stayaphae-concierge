@@ -1,5 +1,6 @@
 import { BRAND } from "@/lib/brand";
 import { MAP_LINKS } from "@/lib/map-links";
+import { renderPrivateToursForPrompt } from "@/lib/private-tours";
 
 /**
  * 게스트 가이드 콘텐츠 — 메인 사이트(staysoom) src/app/guide/page.tsx에서
@@ -38,7 +39,7 @@ export const MANUAL_ITEMS = [
   },
   {
     title: "전기차 충전",
-    body: "마당에 충전용 콘센트가 준비되어 있습니다. 인근 공공 급속충전소 위치는 체크인 시 함께 안내드립니다.",
+    body: "마당에 완속 충전용 콘센트가 준비되어 있습니다. 급속충전소는 환경부 무공해차 통합누리집(EV.or.kr)이나 충전 앱에서 실시간 위치·사용 가능 여부를 확인하실 수 있어요 — 정확한 위치는 체크인 시 확인해 안내드립니다.",
   },
 ];
 
@@ -131,6 +132,7 @@ export const GUIDE_NAV = [
   { href: "#directions", label: "오시는 길" },
   { href: "#dining", label: "로컬 맛집" },
   { href: "#courses", label: "추천 코스" },
+  { href: "#tours", label: "프라이빗 투어" },
 ];
 
 /** 챗 시스템 프롬프트에 그대로 삽입할 수 있는 평문 가이드 요약. */
@@ -163,6 +165,8 @@ export function renderGuideContentForPrompt(): string {
     "",
     "## 추천 코스",
     courses,
+    "",
+    renderPrivateToursForPrompt(),
     "",
     "## 시크릿 쿠폰",
     SECRET_COUPON_NOTE,

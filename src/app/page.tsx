@@ -10,6 +10,7 @@ import {
   MANUAL_ITEMS,
   SECRET_COUPON_NOTE,
 } from "@/lib/guide-content";
+import { PRIVATE_TOURS } from "@/lib/private-tours";
 import { GUIDE_SESSION_COOKIE, verifyGuideSession } from "@/lib/session";
 import { CodeGate } from "./code-gate";
 
@@ -233,6 +234,55 @@ export default async function Home({
               </Reveal>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ---------- Private tours ---------- */}
+      <section id="tours" className="scroll-mt-20 py-24 md:py-32">
+        <div className="mx-auto w-full max-w-6xl px-6 md:px-10">
+          <Reveal className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="text-[0.7rem] font-medium uppercase tracking-[0.45em] text-bronze">
+                Private Tours
+              </p>
+              <h2 className="mt-5 font-serif text-3xl font-light tracking-tight text-ink md:text-4xl">
+                다리로 이어진 섬들, 프라이빗 투어
+              </h2>
+            </div>
+            <p className="max-w-sm text-sm leading-7 text-stone">
+              압해도는 천사대교로 암태도·팔금도·안좌도·자은도까지, 퍼플교로
+              반월도·박지도까지 배 없이 이어집니다. 머무는 길이에 맞춰
+              동선을 컨시어지와 상의해 보세요.
+            </p>
+          </Reveal>
+          <div className="mt-14 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+            {PRIVATE_TOURS.map((tour, i) => (
+              <Reveal key={tour.title} delay={(i % 4 === 0 ? 0 : (i % 4) as 1 | 2 | 3)}>
+                <div className="flex h-full flex-col rounded-sm border border-line bg-cream-deep p-7">
+                  <span className="text-[0.65rem] font-medium uppercase tracking-[0.3em] text-bronze">
+                    {tour.duration}
+                  </span>
+                  <h3 className="mt-3 font-serif text-lg text-ink">{tour.title}</h3>
+                  <p className="mt-2 text-xs tracking-wide text-stone">{tour.islands}</p>
+                  <ul className="mt-4 flex flex-col gap-2">
+                    {tour.highlights.map((h) => (
+                      <li key={h} className="text-xs leading-6 text-stone">
+                        · {h}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+          <p className="mt-8 text-xs leading-6 text-stone">
+            렌터카·기사·보트 섭외는 아직 자동 예약이 연결되어 있지 않습니다 —
+            일정을 정하고 싶다면 AI 컨시어지에게 먼저 물어보시거나{" "}
+            <a href={`mailto:${BRAND.email}`} className="underline underline-offset-2">
+              문의
+            </a>
+            로 남겨주세요.
+          </p>
         </div>
       </section>
 
