@@ -3,32 +3,84 @@ import Anthropic from "@anthropic-ai/sdk";
 import { cookies } from "next/headers";
 import { GUIDE_SESSION_COOKIE, verifyGuideSession } from "@/lib/session";
 import { buildConciergeSystemPrompt } from "@/lib/concierge-persona";
+import { isMoodKey, type MoodKey } from "@/lib/mood";
 
 /** 대화가 한없이 길어지는 것을 막는 소박한 방어선 — 채팅 폭주로 인한 API 비용 급증 방지. */
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_CHARS = 2000;
+/** base64 문자열 상한 — 대략 원본 이미지 4.5MB 수준. */
+const MAX_IMAGE_BASE64_CHARS = 6_000_000;
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+type ImageMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 
-function sanitizeHistory(raw: unknown): ChatMessage[] | null {
+function sanitizeHistory(raw: unknown): Anthropic.MessageParam[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null;
 
   const trimmed = raw.slice(-MAX_MESSAGES);
-  const messages: ChatMessage[] = [];
+  const messages: Anthropic.MessageParam[] = [];
 
-  for (const item of trimmed) {
+  for (let i = 0; i < trimmed.length; i++) {
+    const item = trimmed[i];
+    const isLast = i === trimmed.length - 1;
     if (typeof item !== "object" || item === null) return null;
+
     const role = (item as { role?: unknown }).role;
-    const content = (item as { content?: unknown }).content;
     if (role !== "user" && role !== "assistant") return null;
-    if (typeof content !== "string" || content.trim().length === 0) return null;
-    messages.push({ role, content: content.slice(0, MAX_MESSAGE_CHARS) });
+
+    const rawContent = (item as { content?: unknown }).content;
+
+    if (typeof rawContent === "string") {
+      if (rawContent.trim().length === 0) return null;
+      messages.push({ role, content: rawContent.slice(0, MAX_MESSAGE_CHARS) });
+      continue;
+    }
+
+    // 이미지가 섞인 멀티파트 콘텐츠는 마지막 사용자 메시지에서만 허용한다 —
+    // 대화 기록에 base64를 계속 들고 다니지 않기 위해 클라이언트가 이전
+    // 턴에서는 이미지를 텍스트로 치환해 보낸다(chat-client.tsx 참고).
+    if (!isLast || role !== "user" || !Array.isArray(rawContent)) return null;
+
+    const blocks: Anthropic.ContentBlockParam[] = [];
+    let imageCount = 0;
+
+    for (const block of rawContent) {
+      if (typeof block !== "object" || block === null) return null;
+      const type = (block as { type?: unknown }).type;
+
+      if (type === "text") {
+        const text = (block as { text?: unknown }).text;
+        if (typeof text !== "string") return null;
+        blocks.push({ type: "text", text: text.slice(0, MAX_MESSAGE_CHARS) });
+        continue;
+      }
+
+      if (type === "image") {
+        imageCount += 1;
+        if (imageCount > 1) return null;
+        const source = (block as { source?: unknown }).source;
+        if (typeof source !== "object" || source === null) return null;
+        const mediaType = (source as { media_type?: unknown }).media_type;
+        const data = (source as { data?: unknown }).data;
+        if (typeof mediaType !== "string" || !ALLOWED_IMAGE_TYPES.has(mediaType)) return null;
+        if (typeof data !== "string" || data.length === 0 || data.length > MAX_IMAGE_BASE64_CHARS) {
+          return null;
+        }
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: mediaType as ImageMediaType, data },
+        });
+        continue;
+      }
+
+      return null;
+    }
+
+    if (blocks.length === 0) return null;
+    messages.push({ role: "user", content: blocks });
   }
 
-  if (messages[messages.length - 1].role !== "user") return null;
+  if (messages.length === 0 || messages[messages.length - 1].role !== "user") return null;
   return messages;
 }
 
@@ -54,6 +106,8 @@ export async function POST(request: NextRequest) {
   if (!messages) {
     return new Response("invalid request", { status: 400 });
   }
+  const rawMood = (body as { mood?: unknown } | null)?.mood;
+  const mood: MoodKey | null = isMoodKey(rawMood) ? rawMood : null;
 
   const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
@@ -64,9 +118,13 @@ export async function POST(request: NextRequest) {
         const claudeStream = client.messages.stream({
           model: "claude-opus-4-8",
           max_tokens: 2048,
-          system: buildConciergeSystemPrompt(),
+          system: buildConciergeSystemPrompt(mood),
           thinking: { type: "adaptive" },
           output_config: { effort: "medium" },
+          // 실시간 웹서치 — 신안·목포 축제처럼 매년 날짜가 바뀌는 정보를
+          // 지어내지 않고 그때그때 찾아보게 한다. 비용 방어를 위해 한 턴당
+          // 최대 3회로 제한.
+          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
           messages,
         });
 

@@ -39,6 +39,7 @@ export default async function ChatPage({
 
   const daypart = getKstDaypart();
   const prompts = SUGGESTED_PROMPTS[daypart] ?? SUGGESTED_PROMPTS.midday;
+  const quietHours = daypart === "night" || daypart === "dawn";
 
-  return <ChatClient suggestedPrompts={prompts} />;
+  return <ChatClient suggestedPrompts={prompts} quietHours={quietHours} />;
 }

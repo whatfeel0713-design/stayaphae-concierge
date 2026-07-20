@@ -11,6 +11,7 @@ import {
   SECRET_COUPON_NOTE,
 } from "@/lib/guide-content";
 import { PRIVATE_TOURS } from "@/lib/private-tours";
+import { getKstDaypart } from "@/lib/daypart";
 import { GUIDE_SESSION_COOKIE, verifyGuideSession } from "@/lib/session";
 import { CodeGate } from "./code-gate";
 
@@ -30,8 +31,16 @@ export default async function Home({
     return <CodeGate initialCode={code} />;
   }
 
+  const daypart = getKstDaypart();
+  const quietHours = daypart === "night" || daypart === "dawn";
+
   return (
     <div className="flex flex-col">
+      {quietHours && (
+        <div className="bg-ink-soft px-6 py-2.5 text-center text-xs leading-6 text-cream/80">
+          지금은 조용한 시간이에요 — 이웃 마을을 위해 마당 소음을 낮춰주시면 좋아요.
+        </div>
+      )}
       {/* ---------- Hero ---------- */}
       <section className="bg-ink pb-16 pt-24 text-cream md:pb-24 md:pt-32">
         <div className="mx-auto w-full max-w-4xl px-6 text-center">

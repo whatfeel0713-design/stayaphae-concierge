@@ -1,6 +1,8 @@
 import { BRAND } from "@/lib/brand";
 import { MAP_LINKS } from "@/lib/map-links";
 import { renderPrivateToursForPrompt } from "@/lib/private-tours";
+import { renderLocalProductsForPrompt } from "@/lib/local-products";
+import { renderFestivalSeasonsForPrompt } from "@/lib/festivals";
 
 /**
  * 게스트 가이드 콘텐츠 — 메인 사이트(staysoom) src/app/guide/page.tsx에서
@@ -88,7 +90,7 @@ export const COURSES = [
         day: "둘째 날",
         stops: [
           { time: "08:00", text: "모닝 커피 — 준비된 원두를 내려 창가에서" },
-          { time: "10:00", text: "갯벌 해안 산책 — 물때에 따라 전혀 다른 풍경" },
+          { time: "10:00", text: "갯벌 해안 산책 — 유네스코 세계자연유산 신안 갯벌, 물때에 따라 전혀 다른 풍경" },
           { time: "11:00", text: "체크아웃 — 서두르지 않으셔도 됩니다" },
         ],
       },
@@ -167,6 +169,10 @@ export function renderGuideContentForPrompt(): string {
     courses,
     "",
     renderPrivateToursForPrompt(),
+    "",
+    renderLocalProductsForPrompt(),
+    "",
+    renderFestivalSeasonsForPrompt(),
     "",
     "## 시크릿 쿠폰",
     SECRET_COUPON_NOTE,
