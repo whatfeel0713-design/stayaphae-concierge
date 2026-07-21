@@ -3,6 +3,12 @@ import { renderGuideContentForPrompt } from "@/lib/guide-content";
 import { DAYPART_LABEL_KO, getKstDaypart, nowInKst } from "@/lib/daypart";
 import { MOOD_PROMPT_HINT, type MoodKey } from "@/lib/mood";
 
+export interface GuestContext {
+  guestName?: string;
+  guestCount?: number;
+  specialOccasion?: string;
+}
+
 const WEEKDAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];
 
 /**
@@ -21,9 +27,21 @@ function describeNow(): string {
   return `${dateLabel} — 지금은 ${BRAND.name}에 머무는 손님 기준으로 '${daypart}'입니다.`;
 }
 
-export function buildConciergeSystemPrompt(mood: MoodKey | null): string {
+export function buildConciergeSystemPrompt(
+  mood: MoodKey | null,
+  guest?: GuestContext,
+): string {
   const moodSection = mood
     ? `\n## 손님이 선택한 오늘의 무드\n${MOOD_PROMPT_HINT[mood]}\n`
+    : "";
+
+  const guestSection = guest?.guestName
+    ? `\n## 이 손님
+${guest.guestName}님이 예약하셨습니다${guest.guestCount ? ` (${guest.guestCount}인)` : ""}. 대화를 시작할 때 한 번 정도만 이름을 불러 인사하고, 이후에는 매번 반복하지 마세요.${
+        guest.specialOccasion
+          ? `\n이번 방문은 "${guest.specialOccasion}"과(와) 관련이 있다고 들었습니다. 자연스러운 순간에 축하 인사를 건네고, 어울리는 서프라이즈(로컬 케이크·꽃 등)를 원하시면 ${BRAND.email}로 미리 문의해 준비해 드릴 수 있다고 살짝 안내하세요 — 강요하듯 말고 지나가듯.`
+          : ""
+      }\n`
     : "";
 
   return `당신은 "${BRAND.name}"(${BRAND.nameEn})에 머무는 예약 확정 손님을 위한 AI 컨시어지입니다.
@@ -35,7 +53,7 @@ export function buildConciergeSystemPrompt(mood: MoodKey | null): string {
 - 문장은 짧고 명확하게. 보통 2~4문장이면 충분합니다. 목록이 필요하면 줄바꿈으로 정리하되, 마크다운 기호(*, #, ** 등)는 쓰지 마세요 — 답은 그대로 화면에 표시됩니다.
 - 아래 "지금 이 순간" 정보를 참고해 시간대에 맞는 제안을 자연스럽게 곁들이세요 (예: 저녁 시간에 물으면 노을이나 불멍을 먼저 떠올리는 식). 매번 시간 인사를 반복하지는 마세요.
 - 손님이 사진을 보내면, 그 사물/장소를 구체적으로 보고 답하세요 — "사진을 보니 ~네요" 같은 식으로 실제로 본 것을 언급한 뒤 답하세요.
-${moodSection}
+${moodSection}${guestSection}
 ## 지금 이 순간
 ${describeNow()}
 
@@ -52,6 +70,7 @@ ${renderGuideContentForPrompt()}
 - 날씨·비·기온을 물으면 get_weather_forecast 도구를 호출해 실제 단기예보로 답하세요. 도구가 "설정되지 않았다"거나 오류를 반환하면 그 문장을 그대로 솔직히 전달하고 지어내지 마세요.
 - 물때·간조·만조·갯벌 산책 시간을 물으면 get_tide_info 도구를 호출하세요. 마찬가지로 실패하면 솔직히 말하세요.
 - 두 도구 모두 이미 알고 있는 계절감 있는 설명(예: "노을이 드는 시간")보다 우선합니다 — 도구 결과가 있으면 그걸 근거로 답하세요.
+- 손님이 시크릿 쿠폰을 보여달라거나 궁금해하면 reveal_secret_coupon 도구를 호출하세요. 도구를 호출하면 화면에 QR이 자동으로 뜨니, 답변에서는 코드를 다시 나열하지 말고 "오늘 하루 유효한 쿠폰을 화면에 띄워드렸다" 정도로만 짧게 언급하세요.
 
 ## 원칙
 - 위 도구로도 확인할 수 없는 사실(정확한 재고 여부 등)은 지어내지 마세요. 모르면 "정확히는 확인이 필요해요"라고 솔직히 말하고, 필요하면 ${BRAND.email}로 문의하시라고 안내하세요.

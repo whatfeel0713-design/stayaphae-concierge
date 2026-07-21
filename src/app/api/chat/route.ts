@@ -5,6 +5,16 @@ import { GUIDE_SESSION_COOKIE, verifyGuideSession } from "@/lib/session";
 import { buildConciergeSystemPrompt } from "@/lib/concierge-persona";
 import { isMoodKey, type MoodKey } from "@/lib/mood";
 import { fetchTideInfo, fetchWeatherForecast } from "@/lib/weather-tide";
+import { generateSecretCoupon } from "@/lib/secret-coupon";
+
+/**
+ * 클라이언트가 텍스트 스트림에서 뽑아내는 아웃오브밴드 마커 —
+ * chat-client.tsx의 파서(COUPON_MARKER_*)와 반드시 짝을 맞춰야 한다.
+ * NUL 문자("\u0000")는 Claude의 일반 텍스트 출력에 등장할 일이 없어
+ * 구분자로 안전하다.
+ */
+const COUPON_MARKER_PREFIX = "\u0000APHAE_COUPON:";
+const COUPON_MARKER_SUFFIX = "\u0000";
 
 const CUSTOM_TOOLS: Anthropic.Tool[] = [
   {
@@ -19,11 +29,31 @@ const CUSTOM_TOOLS: Anthropic.Tool[] = [
       "압해도 인근 오늘의 물때(만조·간조 시각)를 조회한다. 갯벌 산책하기 좋은 시간을 물으면 사용하라.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "reveal_secret_coupon",
+    description:
+      "지역상생 시크릿 쿠폰을 QR로 손님 화면에 보여준다. 손님이 쿠폰을 보여달라고 하거나, 쿠폰 이야기에 관심을 보이며 보고 싶어할 때 사용하라.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
 ];
 
-async function runCustomTool(name: string): Promise<string> {
+const CUSTOM_TOOL_NAMES = new Set(CUSTOM_TOOLS.map((t) => t.name));
+
+interface ToolContext {
+  guideCode: string;
+  emit: (chunk: string) => void;
+}
+
+async function runCustomTool(name: string, ctx: ToolContext): Promise<string> {
   if (name === "get_weather_forecast") return fetchWeatherForecast();
   if (name === "get_tide_info") return fetchTideInfo();
+  if (name === "reveal_secret_coupon") {
+    const coupon = await generateSecretCoupon(ctx.guideCode);
+    ctx.emit(
+      `${COUPON_MARKER_PREFIX}${JSON.stringify({ code: coupon.code, dataUrl: coupon.dataUrl })}${COUPON_MARKER_SUFFIX}`,
+    );
+    return `쿠폰이 손님 화면에 QR로 표시됐습니다. 코드: ${coupon.code}. 오늘 하루만 유효하다고 안내하세요.`;
+  }
   return "알 수 없는 도구 호출입니다.";
 }
 
@@ -130,6 +160,11 @@ export async function POST(request: NextRequest) {
   }
   const rawMood = (body as { mood?: unknown } | null)?.mood;
   const mood: MoodKey | null = isMoodKey(rawMood) ? rawMood : null;
+  const guestContext = {
+    guestName: session.guestName,
+    guestCount: session.guestCount,
+    specialOccasion: session.specialOccasion,
+  };
 
   const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
@@ -138,6 +173,7 @@ export async function POST(request: NextRequest) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const emit = (chunk: string) => controller.enqueue(encoder.encode(chunk));
       try {
         let workingMessages: Anthropic.MessageParam[] = messages;
 
@@ -145,7 +181,7 @@ export async function POST(request: NextRequest) {
           const claudeStream = client.messages.stream({
             model: "claude-opus-4-8",
             max_tokens: 2048,
-            system: buildConciergeSystemPrompt(mood),
+            system: buildConciergeSystemPrompt(mood, guestContext),
             thinking: { type: "adaptive" },
             output_config: { effort: "medium" },
             tools: [
@@ -153,14 +189,14 @@ export async function POST(request: NextRequest) {
               // 지어내지 않고 그때그때 찾아보게 한다(서버 도구, 비용 방어로
               // 턴당 최대 3회 제한).
               { type: "web_search_20260209", name: "web_search", max_uses: 3 },
-              // 실시간 날씨·물때 — 우리가 직접 실행하는 커스텀 도구(아래 루프에서 처리).
+              // 실시간 날씨·물때·시크릿 쿠폰 — 우리가 직접 실행하는 커스텀 도구(아래 루프에서 처리).
               ...CUSTOM_TOOLS,
             ],
             messages: workingMessages,
           });
 
           claudeStream.on("text", (delta) => {
-            controller.enqueue(encoder.encode(delta));
+            emit(delta);
           });
 
           const finalMessage = await claudeStream.finalMessage();
@@ -178,8 +214,7 @@ export async function POST(request: NextRequest) {
 
           const customToolUses = finalMessage.content.filter(
             (block): block is Anthropic.ToolUseBlock =>
-              block.type === "tool_use" &&
-              (block.name === "get_weather_forecast" || block.name === "get_tide_info"),
+              block.type === "tool_use" && CUSTOM_TOOL_NAMES.has(block.name),
           );
 
           if (customToolUses.length === 0) break;
@@ -188,18 +223,14 @@ export async function POST(request: NextRequest) {
 
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           for (const toolUse of customToolUses) {
-            const result = await runCustomTool(toolUse.name);
+            const result = await runCustomTool(toolUse.name, { guideCode: session.code, emit });
             toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
           }
           workingMessages = [...workingMessages, { role: "user", content: toolResults }];
         }
       } catch (error) {
         console.error("[chat] stream failed:", error);
-        controller.enqueue(
-          encoder.encode(
-            "\n\n죄송해요, 지금은 답변을 드리기 어려워요. 잠시 후 다시 시도해 주시거나 문의로 남겨주세요.",
-          ),
-        );
+        emit("\n\n죄송해요, 지금은 답변을 드리기 어려워요. 잠시 후 다시 시도해 주시거나 문의로 남겨주세요.");
       } finally {
         controller.close();
       }

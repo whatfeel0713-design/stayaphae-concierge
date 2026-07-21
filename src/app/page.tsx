@@ -48,9 +48,9 @@ export default async function Home({
             Aphae Concierge
           </p>
           <h1 className="mt-6 font-serif text-3xl font-light leading-snug tracking-tight sm:text-4xl md:text-5xl">
-            머무는 동안,
+            {session.guestName ? `${session.guestName}님, 어서오세요` : "머무는 동안,"}
             <br />
-            필요한 모든 것
+            {session.guestName ? "필요한 모든 것을 도와드릴게요" : "필요한 모든 것"}
           </h1>
           <p className="mx-auto mt-7 max-w-md text-sm font-light leading-8 text-cream/75 md:text-base">
             체크인부터 로컬 맛집, 섬을 도는 코스까지 —

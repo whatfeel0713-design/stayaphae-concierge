@@ -9,6 +9,7 @@ interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   imagePreview?: string;
+  coupon?: { code: string; dataUrl: string };
 }
 
 type ApiContentBlock =
@@ -23,6 +24,37 @@ interface ApiMessage {
 const MAX_TURNS = 30;
 const MOOD_STORAGE_KEY = "aphae_guide_mood";
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/** api/chat/route.ts의 COUPON_MARKER_*와 반드시 짝을 맞춰야 하는 아웃오브밴드 마커. */
+const COUPON_MARKER_PREFIX = "\u0000APHAE_COUPON:";
+const COUPON_MARKER_SUFFIX = "\u0000";
+
+function extractCoupon(text: string): {
+  visibleText: string;
+  coupon: { code: string; dataUrl: string } | null;
+} {
+  const startIdx = text.indexOf(COUPON_MARKER_PREFIX);
+  if (startIdx === -1) return { visibleText: text, coupon: null };
+
+  const payloadStart = startIdx + COUPON_MARKER_PREFIX.length;
+  const endIdx = text.indexOf(COUPON_MARKER_SUFFIX, payloadStart);
+  if (endIdx === -1) {
+    // 마커가 아직 끝나지 않았다(스트리밍 중) — 마커 이전까지만 보여준다.
+    return { visibleText: text.slice(0, startIdx), coupon: null };
+  }
+
+  const payload = text.slice(payloadStart, endIdx);
+  const visibleText = (text.slice(0, startIdx) + text.slice(endIdx + COUPON_MARKER_SUFFIX.length)).trim();
+  try {
+    const parsed = JSON.parse(payload);
+    if (typeof parsed?.code === "string" && typeof parsed?.dataUrl === "string") {
+      return { visibleText, coupon: { code: parsed.code, dataUrl: parsed.dataUrl } };
+    }
+  } catch {
+    // 파싱 실패 — 마커만 제거하고 텍스트는 그대로 보여준다.
+  }
+  return { visibleText, coupon: null };
+}
 
 function readStoredMood(): MoodKey | null {
   if (typeof window === "undefined") return null;
@@ -142,9 +174,14 @@ export function ChatClient({
         const { done, value } = await reader.read();
         if (done) break;
         assembled += decoder.decode(value, { stream: true });
+        const { visibleText, coupon } = extractCoupon(assembled);
         setMessages((prev) => {
           const copy = [...prev];
-          copy[copy.length - 1] = { role: "assistant", content: assembled };
+          copy[copy.length - 1] = {
+            role: "assistant",
+            content: visibleText,
+            ...(coupon ? { coupon } : {}),
+          };
           return copy;
         });
       }
@@ -300,6 +337,21 @@ export function ChatClient({
                       >
                         T맵으로 {place.name} 길찾기 →
                       </a>
+                    )}
+                    {message.coupon && (
+                      <div className="mt-3 flex flex-col items-start gap-3 rounded-sm border border-bronze/30 bg-cream-deep p-5">
+                        <p className="text-[0.65rem] font-medium uppercase tracking-[0.3em] text-bronze">
+                          Secret Coupon
+                        </p>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={message.coupon.dataUrl}
+                          alt="시크릿 쿠폰 QR"
+                          className="h-36 w-36 rounded-md bg-cream p-2"
+                        />
+                        <p className="font-mono text-sm tracking-wide text-ink">{message.coupon.code}</p>
+                        <p className="text-xs leading-6 text-stone">오늘 하루만 유효합니다.</p>
+                      </div>
                     )}
                   </div>
                 );
