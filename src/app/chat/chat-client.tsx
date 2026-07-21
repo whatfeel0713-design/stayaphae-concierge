@@ -62,6 +62,17 @@ function readStoredMood(): MoodKey | null {
   return stored === "rest" || stored === "active" || stored === "romantic" ? stored : null;
 }
 
+/** T맵 딥링크 클릭 로깅(Phase B) — fire-and-forget, 실패해도 딥링크 이동은 그대로 진행. */
+function logTmapSend(place: string) {
+  fetch("/api/log-tmap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ place }),
+  }).catch(() => {
+    // 로깅 실패는 무시 — 딥링크 이동을 막지 않는다.
+  });
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -334,6 +345,7 @@ export function ChatClient({
                     {place && (
                       <a
                         href={tmapSearchUrl(place.query)}
+                        onClick={() => logTmapSend(place.name)}
                         className="mt-2 inline-block rounded-full border border-ink/20 px-4 py-1.5 text-xs text-ink-soft transition-colors hover:border-ink"
                       >
                         T맵으로 {place.name} 길찾기 →

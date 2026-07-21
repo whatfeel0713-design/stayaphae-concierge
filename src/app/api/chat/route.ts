@@ -172,6 +172,21 @@ function sanitizeHistory(raw: unknown): Anthropic.MessageParam[] | null {
   return messages;
 }
 
+/** 로깅용 — 멀티파트 콘텐츠에서 텍스트만 뽑아 짧게 요약한다(이미지는 표시만). */
+const CHAT_LOG_EXCERPT_CHARS = 500;
+
+function extractTextSummary(content: string | Anthropic.ContentBlockParam[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .map((block) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "image") return "[사진 첨부]";
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
 /**
  * `?code=` 인증과 동일하게, 이 엔드포인트도 게스트 세션 쿠키가 있어야만
  * 응답한다 — 예약 확정 손님만 API 비용이 드는 챗을 호출할 수 있다.
@@ -210,6 +225,7 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const emit = (chunk: string) => controller.enqueue(encoder.encode(chunk));
+      let assistantTextAccum = "";
       try {
         let workingMessages: Anthropic.MessageParam[] = messages;
 
@@ -232,6 +248,7 @@ export async function POST(request: NextRequest) {
           });
 
           claudeStream.on("text", (delta) => {
+            assistantTextAccum += delta;
             emit(delta);
           });
 
@@ -267,6 +284,21 @@ export async function POST(request: NextRequest) {
             toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
           }
           workingMessages = [...workingMessages, { role: "user", content: toolResults }];
+        }
+
+        // 대화 요약 로깅 — Phase B concierge_logs. 실패해도 이미 스트리밍은
+        // 끝난 뒤라 게스트 경험에는 영향 없다(logConciergeEvent가 조용히 처리).
+        const lastUserMessage = messages[messages.length - 1];
+        const userExcerpt = extractTextSummary(lastUserMessage.content).slice(
+          0,
+          CHAT_LOG_EXCERPT_CHARS,
+        );
+        const assistantExcerpt = assistantTextAccum.slice(0, CHAT_LOG_EXCERPT_CHARS);
+        if (userExcerpt || assistantExcerpt) {
+          await logConciergeEvent(session.code, "chat", {
+            user: userExcerpt,
+            assistant: assistantExcerpt,
+          });
         }
       } catch (error) {
         console.error("[chat] stream failed:", error);
