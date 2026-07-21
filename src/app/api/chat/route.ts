@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { cookies } from "next/headers";
 import { GUIDE_SESSION_COOKIE, verifyGuideSession } from "@/lib/session";
 import { buildConciergeSystemPrompt } from "@/lib/concierge-persona";
@@ -11,54 +12,63 @@ import { logConciergeEvent } from "@/lib/concierge-log";
 /**
  * 클라이언트가 텍스트 스트림에서 뽑아내는 아웃오브밴드 마커 —
  * chat-client.tsx의 파서(COUPON_MARKER_*)와 반드시 짝을 맞춰야 한다.
- * NUL 문자("\u0000")는 Claude의 일반 텍스트 출력에 등장할 일이 없어
- * 구분자로 안전하다.
+ * NUL 문자("\u0000")는 일반 텍스트 출력에 등장할 일이 없어 구분자로 안전하다.
  */
 const COUPON_MARKER_PREFIX = "\u0000APHAE_COUPON:";
 const COUPON_MARKER_SUFFIX = "\u0000";
 
-const CUSTOM_TOOLS: Anthropic.Tool[] = [
+const CUSTOM_TOOLS: ChatCompletionTool[] = [
   {
-    name: "get_weather_forecast",
-    description:
-      "스테이 압해(전남 신안군 압해읍) 지역의 오늘 날씨 단기예보를 조회한다. 손님이 날씨·비·기온을 물으면 사용하라.",
-    input_schema: { type: "object", properties: {}, additionalProperties: false },
+    type: "function",
+    function: {
+      name: "get_weather_forecast",
+      description:
+        "스테이 압해(전남 신안군 압해읍) 지역의 오늘 날씨 단기예보를 조회한다. 손님이 날씨·비·기온을 물으면 사용하라.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
   },
   {
-    name: "get_tide_info",
-    description:
-      "압해도 인근 오늘의 물때(만조·간조 시각)를 조회한다. 갯벌 산책하기 좋은 시간을 물으면 사용하라.",
-    input_schema: { type: "object", properties: {}, additionalProperties: false },
+    type: "function",
+    function: {
+      name: "get_tide_info",
+      description:
+        "압해도 인근 오늘의 물때(만조·간조 시각)를 조회한다. 갯벌 산책하기 좋은 시간을 물으면 사용하라.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
   },
   {
-    name: "reveal_secret_coupon",
-    description:
-      "지역상생 시크릿 쿠폰을 QR로 손님 화면에 보여준다. 손님이 쿠폰을 보여달라고 하거나, 쿠폰 이야기에 관심을 보이며 보고 싶어할 때 사용하라.",
-    input_schema: { type: "object", properties: {}, additionalProperties: false },
+    type: "function",
+    function: {
+      name: "reveal_secret_coupon",
+      description:
+        "지역상생 시크릿 쿠폰을 QR로 손님 화면에 보여준다. 손님이 쿠폰을 보여달라고 하거나, 쿠폰 이야기에 관심을 보이며 보고 싶어할 때 사용하라.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
   },
   {
-    name: "request_bbq_service",
-    description:
-      "손님이 바베큐를 실제로 신청하고 싶어할 때 사용한다(단순 문의가 아니라 '해줘', '신청할게요' 같은 확정 의사가 있을 때). 희망 시간을 함께 받아야 한다.",
-    input_schema: {
-      type: "object",
-      properties: {
-        preferred_time: {
-          type: "string",
-          description: "손님이 원하는 바베큐 시간 — 손님이 말한 그대로(예: '오늘 저녁 7시', '내일 6시쯤')",
+    type: "function",
+    function: {
+      name: "request_bbq_service",
+      description:
+        "손님이 바베큐를 실제로 신청하고 싶어할 때 사용한다(단순 문의가 아니라 '해줘', '신청할게요' 같은 확정 의사가 있을 때). 희망 시간을 함께 받아야 한다.",
+      parameters: {
+        type: "object",
+        properties: {
+          preferred_time: {
+            type: "string",
+            description: "손님이 원하는 바베큐 시간 — 손님이 말한 그대로(예: '오늘 저녁 7시', '내일 6시쯤')",
+          },
+          notes: {
+            type: "string",
+            description: "추가 요청사항(선택) — 예: 인원 변경, 특별 요청 등",
+          },
         },
-        notes: {
-          type: "string",
-          description: "추가 요청사항(선택) — 예: 인원 변경, 특별 요청 등",
-        },
+        required: ["preferred_time"],
+        additionalProperties: false,
       },
-      required: ["preferred_time"],
-      additionalProperties: false,
     },
   },
 ];
-
-const CUSTOM_TOOL_NAMES = new Set(CUSTOM_TOOLS.map((t) => t.name));
 
 interface ToolContext {
   guideCode: string;
@@ -100,13 +110,21 @@ const MAX_MESSAGE_CHARS = 2000;
 const MAX_IMAGE_BASE64_CHARS = 6_000_000;
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
-type ImageMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+/** 클라이언트(chat-client.tsx)가 보내는 멀티파트 콘텐츠 블록 — Anthropic 시절 형식을 그대로 유지해 프런트를 건드리지 않는다. */
+type ApiContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
-function sanitizeHistory(raw: unknown): Anthropic.MessageParam[] | null {
+interface ApiMessage {
+  role: "user" | "assistant";
+  content: string | ApiContentBlock[];
+}
+
+function sanitizeHistory(raw: unknown): ApiMessage[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null;
 
   const trimmed = raw.slice(-MAX_MESSAGES);
-  const messages: Anthropic.MessageParam[] = [];
+  const messages: ApiMessage[] = [];
 
   for (let i = 0; i < trimmed.length; i++) {
     const item = trimmed[i];
@@ -129,7 +147,7 @@ function sanitizeHistory(raw: unknown): Anthropic.MessageParam[] | null {
     // 턴에서는 이미지를 텍스트로 치환해 보낸다(chat-client.tsx 참고).
     if (!isLast || role !== "user" || !Array.isArray(rawContent)) return null;
 
-    const blocks: Anthropic.ContentBlockParam[] = [];
+    const blocks: ApiContentBlock[] = [];
     let imageCount = 0;
 
     for (const block of rawContent) {
@@ -154,10 +172,7 @@ function sanitizeHistory(raw: unknown): Anthropic.MessageParam[] | null {
         if (typeof data !== "string" || data.length === 0 || data.length > MAX_IMAGE_BASE64_CHARS) {
           return null;
         }
-        blocks.push({
-          type: "image",
-          source: { type: "base64", media_type: mediaType as ImageMediaType, data },
-        });
+        blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data } });
         continue;
       }
 
@@ -172,19 +187,41 @@ function sanitizeHistory(raw: unknown): Anthropic.MessageParam[] | null {
   return messages;
 }
 
+/** 우리 내부 메시지 형식 → OpenAI Chat Completions 메시지 형식. */
+function toOpenAiMessages(messages: ApiMessage[]): ChatCompletionMessageParam[] {
+  return messages.map((message): ChatCompletionMessageParam => {
+    if (typeof message.content === "string") {
+      return { role: message.role, content: message.content };
+    }
+    return {
+      role: "user",
+      content: message.content.map((block) =>
+        block.type === "text"
+          ? { type: "text" as const, text: block.text }
+          : {
+              type: "image_url" as const,
+              image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+            },
+      ),
+    };
+  });
+}
+
 /** 로깅용 — 멀티파트 콘텐츠에서 텍스트만 뽑아 짧게 요약한다(이미지는 표시만). */
 const CHAT_LOG_EXCERPT_CHARS = 500;
 
-function extractTextSummary(content: string | Anthropic.ContentBlockParam[]): string {
+function extractTextSummary(content: string | ApiContentBlock[]): string {
   if (typeof content === "string") return content;
   return content
-    .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "image") return "[사진 첨부]";
-      return "";
-    })
+    .map((block) => (block.type === "text" ? block.text : "[사진 첨부]"))
     .filter(Boolean)
     .join(" ");
+}
+
+interface AccumulatingToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 /**
@@ -199,7 +236,7 @@ export async function POST(request: NextRequest) {
     return new Response("unauthorized", { status: 401 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return new Response("concierge chat is not configured", { status: 503 });
   }
@@ -217,7 +254,7 @@ export async function POST(request: NextRequest) {
     specialOccasion: session.specialOccasion,
   };
 
-  const client = new Anthropic({ apiKey });
+  const client = new OpenAI({ apiKey });
   const encoder = new TextEncoder();
 
   const MAX_TOOL_ITERATIONS = 6;
@@ -227,63 +264,85 @@ export async function POST(request: NextRequest) {
       const emit = (chunk: string) => controller.enqueue(encoder.encode(chunk));
       let assistantTextAccum = "";
       try {
-        let workingMessages: Anthropic.MessageParam[] = messages;
+        let workingMessages: ChatCompletionMessageParam[] = [
+          { role: "system", content: buildConciergeSystemPrompt(mood, guestContext) },
+          ...toOpenAiMessages(messages),
+        ];
 
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-          const claudeStream = client.messages.stream({
-            model: "claude-opus-4-8",
+          const completionStream = await client.chat.completions.create({
+            model: "gpt-4o",
             max_tokens: 2048,
-            system: buildConciergeSystemPrompt(mood, guestContext),
-            thinking: { type: "adaptive" },
-            output_config: { effort: "medium" },
-            tools: [
-              // 실시간 웹서치 — 신안·목포 축제처럼 매년 날짜가 바뀌는 정보를
-              // 지어내지 않고 그때그때 찾아보게 한다(서버 도구, 비용 방어로
-              // 턴당 최대 3회 제한).
-              { type: "web_search_20260209", name: "web_search", max_uses: 3 },
-              // 실시간 날씨·물때·시크릿 쿠폰 — 우리가 직접 실행하는 커스텀 도구(아래 루프에서 처리).
-              ...CUSTOM_TOOLS,
-            ],
+            stream: true,
+            tools: CUSTOM_TOOLS,
             messages: workingMessages,
           });
 
-          claudeStream.on("text", (delta) => {
-            assistantTextAccum += delta;
-            emit(delta);
-          });
+          let iterationText = "";
+          const toolCallsByIndex = new Map<number, AccumulatingToolCall>();
+          let finishReason: string | null = null;
 
-          const finalMessage = await claudeStream.finalMessage();
+          for await (const chunk of completionStream) {
+            const choice = chunk.choices[0];
+            if (!choice) continue;
 
-          if (finalMessage.stop_reason === "pause_turn") {
-            // 서버 도구(web_search) 반복 한도에 걸린 경우 — 새 사용자 메시지
-            // 없이 그대로 이어서 재요청하면 서버가 자동으로 이어간다.
-            workingMessages = [...workingMessages, { role: "assistant", content: finalMessage.content }];
-            continue;
+            const delta = choice.delta;
+            if (delta?.content) {
+              iterationText += delta.content;
+              assistantTextAccum += delta.content;
+              emit(delta.content);
+            }
+
+            if (delta?.tool_calls) {
+              for (const toolCallDelta of delta.tool_calls) {
+                const existing = toolCallsByIndex.get(toolCallDelta.index);
+                if (!existing) {
+                  toolCallsByIndex.set(toolCallDelta.index, {
+                    id: toolCallDelta.id ?? "",
+                    name: toolCallDelta.function?.name ?? "",
+                    arguments: toolCallDelta.function?.arguments ?? "",
+                  });
+                } else {
+                  if (toolCallDelta.id) existing.id = toolCallDelta.id;
+                  if (toolCallDelta.function?.name) existing.name += toolCallDelta.function.name;
+                  if (toolCallDelta.function?.arguments) existing.arguments += toolCallDelta.function.arguments;
+                }
+              }
+            }
+
+            if (choice.finish_reason) finishReason = choice.finish_reason;
           }
 
-          if (finalMessage.stop_reason !== "tool_use") {
-            break;
+          if (finishReason !== "tool_calls" || toolCallsByIndex.size === 0) break;
+
+          const toolCalls = Array.from(toolCallsByIndex.values());
+
+          workingMessages = [
+            ...workingMessages,
+            {
+              role: "assistant",
+              content: iterationText || null,
+              tool_calls: toolCalls.map((call) => ({
+                id: call.id,
+                type: "function" as const,
+                function: { name: call.name, arguments: call.arguments },
+              })),
+            },
+          ];
+
+          for (const call of toolCalls) {
+            let parsedInput: Record<string, unknown> = {};
+            try {
+              parsedInput = call.arguments ? JSON.parse(call.arguments) : {};
+            } catch {
+              parsedInput = {};
+            }
+            const result = await runCustomTool(call.name, parsedInput, {
+              guideCode: session.code,
+              emit,
+            });
+            workingMessages.push({ role: "tool", tool_call_id: call.id, content: result });
           }
-
-          const customToolUses = finalMessage.content.filter(
-            (block): block is Anthropic.ToolUseBlock =>
-              block.type === "tool_use" && CUSTOM_TOOL_NAMES.has(block.name),
-          );
-
-          if (customToolUses.length === 0) break;
-
-          workingMessages = [...workingMessages, { role: "assistant", content: finalMessage.content }];
-
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
-          for (const toolUse of customToolUses) {
-            const result = await runCustomTool(
-              toolUse.name,
-              (toolUse.input as Record<string, unknown>) ?? {},
-              { guideCode: session.code, emit },
-            );
-            toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
-          }
-          workingMessages = [...workingMessages, { role: "user", content: toolResults }];
         }
 
         // 대화 요약 로깅 — Phase B concierge_logs. 실패해도 이미 스트리밍은
