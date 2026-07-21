@@ -279,7 +279,8 @@ export function ChatClient({
             <div className="flex flex-1 flex-col items-center justify-center gap-8 py-16 text-center">
               <p className="max-w-sm text-sm leading-7 text-stone">
                 이용 안내부터 로컬 맛집, 오늘 추천 코스까지 — 이 집을 잘 아는 사람에게
-                묻듯 편하게 물어보세요. 궁금한 사물을 사진으로 찍어 보내셔도 됩니다.
+                묻듯 편하게 물어보세요. 궁금한 사물을 사진으로 찍어 보내거나, 마음에 드는
+                풍경 사진을 보내 캡션을 부탁해도 좋아요.
               </p>
               <div className="flex flex-wrap justify-center gap-2.5">
                 {suggestedPrompts.map((prompt) => (

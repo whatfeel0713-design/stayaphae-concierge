@@ -3,6 +3,7 @@ import { MAP_LINKS } from "@/lib/map-links";
 import { renderPrivateToursForPrompt } from "@/lib/private-tours";
 import { renderLocalProductsForPrompt } from "@/lib/local-products";
 import { renderFestivalSeasonsForPrompt } from "@/lib/festivals";
+import { renderDeviceManualsForPrompt } from "@/lib/device-manuals";
 
 /**
  * 게스트 가이드 콘텐츠 — 메인 사이트(staysoom) src/app/guide/page.tsx에서
@@ -173,6 +174,8 @@ export function renderGuideContentForPrompt(): string {
     renderLocalProductsForPrompt(),
     "",
     renderFestivalSeasonsForPrompt(),
+    "",
+    renderDeviceManualsForPrompt(),
     "",
     "## 시크릿 쿠폰",
     SECRET_COUPON_NOTE,
