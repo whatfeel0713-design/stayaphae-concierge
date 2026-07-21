@@ -4,6 +4,28 @@ import { cookies } from "next/headers";
 import { GUIDE_SESSION_COOKIE, verifyGuideSession } from "@/lib/session";
 import { buildConciergeSystemPrompt } from "@/lib/concierge-persona";
 import { isMoodKey, type MoodKey } from "@/lib/mood";
+import { fetchTideInfo, fetchWeatherForecast } from "@/lib/weather-tide";
+
+const CUSTOM_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "get_weather_forecast",
+    description:
+      "스테이 압해(전남 신안군 압해읍) 지역의 오늘 날씨 단기예보를 조회한다. 손님이 날씨·비·기온을 물으면 사용하라.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "get_tide_info",
+    description:
+      "압해도 인근 오늘의 물때(만조·간조 시각)를 조회한다. 갯벌 산책하기 좋은 시간을 물으면 사용하라.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+];
+
+async function runCustomTool(name: string): Promise<string> {
+  if (name === "get_weather_forecast") return fetchWeatherForecast();
+  if (name === "get_tide_info") return fetchTideInfo();
+  return "알 수 없는 도구 호출입니다.";
+}
 
 /** 대화가 한없이 길어지는 것을 막는 소박한 방어선 — 채팅 폭주로 인한 API 비용 급증 방지. */
 const MAX_MESSAGES = 30;
@@ -112,27 +134,65 @@ export async function POST(request: NextRequest) {
   const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
 
+  const MAX_TOOL_ITERATIONS = 6;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const claudeStream = client.messages.stream({
-          model: "claude-opus-4-8",
-          max_tokens: 2048,
-          system: buildConciergeSystemPrompt(mood),
-          thinking: { type: "adaptive" },
-          output_config: { effort: "medium" },
-          // 실시간 웹서치 — 신안·목포 축제처럼 매년 날짜가 바뀌는 정보를
-          // 지어내지 않고 그때그때 찾아보게 한다. 비용 방어를 위해 한 턴당
-          // 최대 3회로 제한.
-          tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
-          messages,
-        });
+        let workingMessages: Anthropic.MessageParam[] = messages;
 
-        claudeStream.on("text", (delta) => {
-          controller.enqueue(encoder.encode(delta));
-        });
+        for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+          const claudeStream = client.messages.stream({
+            model: "claude-opus-4-8",
+            max_tokens: 2048,
+            system: buildConciergeSystemPrompt(mood),
+            thinking: { type: "adaptive" },
+            output_config: { effort: "medium" },
+            tools: [
+              // 실시간 웹서치 — 신안·목포 축제처럼 매년 날짜가 바뀌는 정보를
+              // 지어내지 않고 그때그때 찾아보게 한다(서버 도구, 비용 방어로
+              // 턴당 최대 3회 제한).
+              { type: "web_search_20260209", name: "web_search", max_uses: 3 },
+              // 실시간 날씨·물때 — 우리가 직접 실행하는 커스텀 도구(아래 루프에서 처리).
+              ...CUSTOM_TOOLS,
+            ],
+            messages: workingMessages,
+          });
 
-        await claudeStream.finalMessage();
+          claudeStream.on("text", (delta) => {
+            controller.enqueue(encoder.encode(delta));
+          });
+
+          const finalMessage = await claudeStream.finalMessage();
+
+          if (finalMessage.stop_reason === "pause_turn") {
+            // 서버 도구(web_search) 반복 한도에 걸린 경우 — 새 사용자 메시지
+            // 없이 그대로 이어서 재요청하면 서버가 자동으로 이어간다.
+            workingMessages = [...workingMessages, { role: "assistant", content: finalMessage.content }];
+            continue;
+          }
+
+          if (finalMessage.stop_reason !== "tool_use") {
+            break;
+          }
+
+          const customToolUses = finalMessage.content.filter(
+            (block): block is Anthropic.ToolUseBlock =>
+              block.type === "tool_use" &&
+              (block.name === "get_weather_forecast" || block.name === "get_tide_info"),
+          );
+
+          if (customToolUses.length === 0) break;
+
+          workingMessages = [...workingMessages, { role: "assistant", content: finalMessage.content }];
+
+          const toolResults: Anthropic.ToolResultBlockParam[] = [];
+          for (const toolUse of customToolUses) {
+            const result = await runCustomTool(toolUse.name);
+            toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
+          }
+          workingMessages = [...workingMessages, { role: "user", content: toolResults }];
+        }
       } catch (error) {
         console.error("[chat] stream failed:", error);
         controller.enqueue(
