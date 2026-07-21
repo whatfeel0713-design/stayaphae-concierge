@@ -6,6 +6,7 @@ import { buildConciergeSystemPrompt } from "@/lib/concierge-persona";
 import { isMoodKey, type MoodKey } from "@/lib/mood";
 import { fetchTideInfo, fetchWeatherForecast } from "@/lib/weather-tide";
 import { generateSecretCoupon } from "@/lib/secret-coupon";
+import { logConciergeEvent } from "@/lib/concierge-log";
 
 /**
  * 클라이언트가 텍스트 스트림에서 뽑아내는 아웃오브밴드 마커 —
@@ -35,6 +36,26 @@ const CUSTOM_TOOLS: Anthropic.Tool[] = [
       "지역상생 시크릿 쿠폰을 QR로 손님 화면에 보여준다. 손님이 쿠폰을 보여달라고 하거나, 쿠폰 이야기에 관심을 보이며 보고 싶어할 때 사용하라.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "request_bbq_service",
+    description:
+      "손님이 바베큐를 실제로 신청하고 싶어할 때 사용한다(단순 문의가 아니라 '해줘', '신청할게요' 같은 확정 의사가 있을 때). 희망 시간을 함께 받아야 한다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        preferred_time: {
+          type: "string",
+          description: "손님이 원하는 바베큐 시간 — 손님이 말한 그대로(예: '오늘 저녁 7시', '내일 6시쯤')",
+        },
+        notes: {
+          type: "string",
+          description: "추가 요청사항(선택) — 예: 인원 변경, 특별 요청 등",
+        },
+      },
+      required: ["preferred_time"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const CUSTOM_TOOL_NAMES = new Set(CUSTOM_TOOLS.map((t) => t.name));
@@ -44,16 +65,31 @@ interface ToolContext {
   emit: (chunk: string) => void;
 }
 
-async function runCustomTool(name: string, ctx: ToolContext): Promise<string> {
+async function runCustomTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<string> {
   if (name === "get_weather_forecast") return fetchWeatherForecast();
   if (name === "get_tide_info") return fetchTideInfo();
+
   if (name === "reveal_secret_coupon") {
     const coupon = await generateSecretCoupon(ctx.guideCode);
     ctx.emit(
       `${COUPON_MARKER_PREFIX}${JSON.stringify({ code: coupon.code, dataUrl: coupon.dataUrl })}${COUPON_MARKER_SUFFIX}`,
     );
+    await logConciergeEvent(ctx.guideCode, "coupon_view", { code: coupon.code });
     return `쿠폰이 손님 화면에 QR로 표시됐습니다. 코드: ${coupon.code}. 오늘 하루만 유효하다고 안내하세요.`;
   }
+
+  if (name === "request_bbq_service") {
+    const preferredTime = typeof input.preferred_time === "string" ? input.preferred_time : "";
+    const notes = typeof input.notes === "string" ? input.notes : undefined;
+    if (!preferredTime) return "희망 시간을 확인하지 못했습니다 — 손님께 다시 여쭤봐 주세요.";
+    await logConciergeEvent(ctx.guideCode, "bbq", { preferred_time: preferredTime, notes });
+    return `바베큐 신청이 접수됐습니다(희망 시간: ${preferredTime}). 호스트가 확인 후 준비합니다 — 확정 여부는 별도로 안내드린다고 손님께 말씀하세요.`;
+  }
+
   return "알 수 없는 도구 호출입니다.";
 }
 
@@ -223,7 +259,11 @@ export async function POST(request: NextRequest) {
 
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           for (const toolUse of customToolUses) {
-            const result = await runCustomTool(toolUse.name, { guideCode: session.code, emit });
+            const result = await runCustomTool(
+              toolUse.name,
+              (toolUse.input as Record<string, unknown>) ?? {},
+              { guideCode: session.code, emit },
+            );
             toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
           }
           workingMessages = [...workingMessages, { role: "user", content: toolResults }];
