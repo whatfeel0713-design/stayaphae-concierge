@@ -8,6 +8,12 @@ import { createClient } from "@/utils/supabase/server";
  */
 export async function verifyGuideAccess(code: string): Promise<boolean> {
   if (!code) return false;
+
+  // 운영자가 예약 상태와 무관하게 언제든 검토 접속할 수 있도록 하는
+  // 마스터 코드. 설정 안 하면(빈 값) 이 우회 경로는 비활성화된다.
+  const masterCode = process.env.GUIDE_MASTER_CODE;
+  if (masterCode && code === masterCode) return true;
+
   try {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("verify_guide_access", {

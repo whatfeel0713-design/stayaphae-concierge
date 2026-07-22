@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { Reveal } from "@/components/reveal";
+import { ManualSection } from "@/components/manual-section";
+import { SectionNav } from "@/components/section-nav";
 import { BRAND } from "@/lib/brand";
 import { MAP_LINKS } from "@/lib/map-links";
 import {
@@ -36,6 +38,7 @@ export default async function Home({
 
   return (
     <div className="flex flex-col">
+      <SectionNav />
       {quietHours && (
         <div className="bg-ink-soft px-6 py-2.5 text-center text-xs leading-6 text-cream/80">
           지금은 조용한 시간이에요 — 이웃 마을을 위해 마당 소음을 낮춰주시면 좋아요.
@@ -70,6 +73,7 @@ export default async function Home({
           </nav>
         </div>
       </section>
+      <div id="hero-end" />
 
       {/* ---------- AI Concierge teaser ---------- */}
       <section className="border-b border-line bg-cream-deep py-16 md:py-20">
@@ -106,18 +110,7 @@ export default async function Home({
               이용 안내
             </h2>
           </Reveal>
-          <div className="mt-14 grid gap-x-10 gap-y-12 sm:grid-cols-2 md:grid-cols-3">
-            {MANUAL_ITEMS.map((item, i) => (
-              <Reveal key={item.title} delay={(i % 3) as 0 | 1 | 2}>
-                <div className="border-t border-ink/15 pt-6">
-                  <h3 className="text-base font-medium tracking-wide text-ink">
-                    {item.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-7 text-stone">{item.body}</p>
-                </div>
-              </Reveal>
-            ))}
-          </div>
+          <ManualSection items={MANUAL_ITEMS} />
         </div>
       </section>
 

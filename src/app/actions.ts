@@ -3,7 +3,8 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { fetchGuideSessionInfo, verifyGuideAccess } from "@/lib/guide-access";
-import { GUIDE_SESSION_COOKIE, signGuideSession } from "@/lib/session";
+import { GUIDE_SESSION_COOKIE, signGuideSession, verifyGuideSession } from "@/lib/session";
+import { logConciergeEvent } from "@/lib/concierge-log";
 
 export interface VerifyCodeState {
   error?: string;
@@ -46,4 +47,32 @@ export async function verifyCodeAction(
   });
 
   redirect("/");
+}
+
+export interface BbqRequestState {
+  success?: boolean;
+  error?: string;
+}
+
+/** 메인 페이지 이용안내 카드(바베큐)에서 시간 선택 후 신청 — api/chat의
+ * request_bbq_service 도구와 같은 concierge_logs 경로(request_type="bbq")를 탄다. */
+export async function submitBbqRequestAction(
+  _prev: BbqRequestState,
+  formData: FormData,
+): Promise<BbqRequestState> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(GUIDE_SESSION_COOKIE)?.value;
+  const session = token ? await verifyGuideSession(token) : null;
+  if (!session) {
+    return { error: "세션이 만료되었습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요." };
+  }
+
+  const preferredTime = String(formData.get("preferred_time") ?? "").trim();
+  if (!preferredTime) {
+    return { error: "희망 시간을 선택해 주세요." };
+  }
+  const notes = String(formData.get("notes") ?? "").trim() || undefined;
+
+  await logConciergeEvent(session.code, "bbq", { preferred_time: preferredTime, notes });
+  return { success: true };
 }

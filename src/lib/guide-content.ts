@@ -11,38 +11,79 @@ import { renderDeviceManualsForPrompt } from "@/lib/device-manuals";
  * 챗(api/chat)이 같은 데이터를 공유한다 — 콘텐츠를 고치면 둘 다 함께 갱신된다.
  * 맛집 상호 등은 플레이스홀더 — 실제 정보로 교체할 것.
  */
-export const MANUAL_ITEMS = [
+interface ManualItemBase {
+  title: string;
+  body: string;
+}
+
+export interface ManualInfoItem extends ManualItemBase {
+  kind: "info";
+}
+
+export interface ManualBbqItem extends ManualItemBase {
+  kind: "bbq";
+  /** 30분 단위 예약 가능 시간 — 마지막 슬롯은 "저녁 9시까지" 이용 규칙에 맞춰 20:30. */
+  timeSlots: string[];
+}
+
+export interface ManualSiteMapItem extends ManualItemBase {
+  kind: "site-map";
+  highlight: "firepit" | "recycling";
+}
+
+export interface ManualLinkItem extends ManualItemBase {
+  kind: "link";
+  linkHref: string;
+  linkLabel: string;
+}
+
+export type ManualItem = ManualInfoItem | ManualBbqItem | ManualSiteMapItem | ManualLinkItem;
+
+export const MANUAL_ITEMS: ManualItem[] = [
   {
+    kind: "info",
     title: "체크인 · 체크아웃",
     body: `${BRAND.checkInOut}. 셀프 체크인 — 도어록 비밀번호는 체크인 당일 문자로 안내드립니다.`,
   },
   {
+    kind: "info",
     title: "와이파이",
     body: "네트워크 이름과 비밀번호는 거실의 웰컴 카드에 적어두었습니다.",
   },
   {
+    kind: "bbq",
     title: "바베큐",
     body: "이용 전날까지 말씀해 주시면 원하는 시간에 맞춰 준비해 드립니다. 이용 시간은 저녁 9시까지입니다.",
+    timeSlots: ["17:00", "17:30", "18:00", "18:30", "19:00", "19:30", "20:00", "20:30"],
   },
   {
+    kind: "site-map",
     title: "불멍 파이어핏",
     body: "마당의 파이어핏은 자유롭게 이용하실 수 있습니다. 장작은 창고에 준비되어 있습니다.",
+    highlight: "firepit",
   },
   {
+    kind: "site-map",
     title: "분리수거",
     body: "쓰레기는 마당 한쪽의 분리수거함에 배출해 주세요. 퇴실 시 음식물만 따로 부탁드립니다.",
+    highlight: "recycling",
   },
   {
+    kind: "info",
     title: "조용한 밤",
     body: "하루 한 팀의 독채이지만, 이웃 마을의 밤을 위해 밤 10시 이후에는 마당 소음을 낮춰주세요.",
   },
   {
+    kind: "info",
     title: "안전",
     body: "소화기는 현관과 주방에 있습니다. 급한 일은 언제든 아래 연락처로 주세요 — 가까이에 있습니다.",
   },
   {
+    kind: "link",
     title: "전기차 충전",
     body: "마당에 완속 충전용 콘센트가 준비되어 있습니다. 급속충전소는 환경부 무공해차 통합누리집(EV.or.kr)이나 충전 앱에서 실시간 위치·사용 가능 여부를 확인하실 수 있어요 — 정확한 위치는 체크인 시 확인해 안내드립니다.",
+    linkHref: "https://ev.or.kr",
+    linkLabel: "전기차 충전소 현황 보기 (EV.or.kr)",
   },
 ];
 
