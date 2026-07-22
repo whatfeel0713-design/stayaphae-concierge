@@ -140,6 +140,7 @@ export function ChatClient({
     setError(null);
     setPendingImage(null);
     setInput("");
+    setShowMoodPicker(false);
 
     const displayUser: DisplayMessage = {
       role: "user",
@@ -263,7 +264,7 @@ export function ChatClient({
             </button>
           )}
 
-          {showMoodPicker ? (
+          {messages.length === 0 && showMoodPicker ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-8 py-16 text-center">
               <div>
                 <p className="text-[0.7rem] font-medium uppercase tracking-[0.45em] text-bronze">
